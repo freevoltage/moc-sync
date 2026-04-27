@@ -1,0 +1,11 @@
+{
+	"id": "moc-sync",
+	"name": "MOC Sync",
+	"version": "0.1.0",
+	"minAppVersion": "0.15.0",
+	"description": "Automatically moves notes to their MOC folder based on the 'up' frontmatter property",
+	"author": "dev",
+	"authorUrl": "",
+	"fundingUrl": "",
+	"isDesktopOnly": false
+}
