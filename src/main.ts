@@ -1,6 +1,8 @@
 import { App, Plugin, TFile, TFolder, Notice } from 'obsidian';
 import { MOCSyncSettings, DEFAULT_SETTINGS, MOCSyncSettingTab } from './settings';
 
+type SyncResult = 'moved' | 'already_in_place' | 'no_up_property' | 'no_moc_found' | 'skipped_folder_note' | 'skipped_excluded_directory' | 'error';
+
 export default class MOCSyncPlugin extends Plugin {
 	settings: MOCSyncSettings;
 
@@ -25,6 +27,47 @@ export default class MOCSyncPlugin extends Plugin {
 			}
 		});
 
+		this.addCommand({
+			id: 'sync-this-note',
+			name: 'Sync this note to MOC folder',
+			callback: async () => {
+				const activeFile = this.app.workspace.getActiveFile();
+				if (!activeFile) {
+					new Notice('No active file');
+					return;
+				}
+				if (!(activeFile instanceof TFile) || activeFile.extension !== 'md') {
+					new Notice('Not a Markdown file');
+					return;
+				}
+				const result = await this.syncNoteToMOC(activeFile, true);
+				if (!this.settings.showNotifications) return;
+				switch (result) {
+					case 'moved':
+						new Notice(`Moved ${activeFile.name}`);
+						break;
+					case 'already_in_place':
+						new Notice('Already in correct folder');
+						break;
+					case 'no_up_property':
+						new Notice('No up property found');
+						break;
+					case 'no_moc_found':
+						new Notice('MOC folder not found');
+						break;
+					case 'skipped_folder_note':
+						new Notice('Folder notes cannot be moved');
+						break;
+					case 'skipped_excluded_directory':
+						new Notice('File is in excluded directory');
+						break;
+					case 'error':
+						new Notice('Error moving file');
+						break;
+				}
+			}
+		});
+
 		this.addSettingTab(new MOCSyncSettingTab(this.app, this));
 
 		if (this.settings.syncOnLoad) {
@@ -40,6 +83,62 @@ export default class MOCSyncPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+	}
+
+	async syncNoteToMOC(file: TFile, showNotification: boolean = true): Promise<SyncResult> {
+		if (this.isFolderNote(file)) {
+			return 'skipped_folder_note';
+		}
+
+		if (this.isInExcludedDirectory(file)) {
+			return 'skipped_excluded_directory';
+		}
+
+		let data: string;
+		try {
+			data = await this.app.vault.read(file);
+		} catch {
+			return 'error';
+		}
+
+		const frontmatter = this.parseFrontmatter(data);
+		if (!frontmatter || !frontmatter.up) {
+			return 'no_up_property';
+		}
+
+		const targetMOC = this.extractMOCName(frontmatter.up);
+		if (!targetMOC) {
+			return 'no_up_property';
+		}
+
+		const sanitizedMOC = targetMOC
+			.replace(/[\u200B-\u200D\uFEFF]/g, '')
+			.replace(/\s+/g, ' ')
+			.trim();
+
+		const targetFolder = this.findFolderByName(sanitizedMOC);
+		if (!targetFolder || targetFolder instanceof TFile) {
+			return 'no_moc_found';
+		}
+
+		const targetFolderPath = targetFolder.path + '/';
+		const expectedPath = targetFolderPath + file.name;
+		const currentPath = file.path;
+
+		if (currentPath === expectedPath) {
+			return 'already_in_place';
+		}
+
+		try {
+			await this.app.vault.rename(file, expectedPath);
+			if (showNotification && this.settings.showNotifications) {
+				new Notice(`Moved ${file.name} -> ${targetFolderPath}`);
+			}
+			return 'moved';
+		} catch (error) {
+			console.error(`[MOC Sync] Failed to move file:`, error);
+			return 'error';
+		}
 	}
 
 	async handleMetadataChange(file: TFile, data: string, cache: any): Promise<void> {
@@ -64,37 +163,7 @@ export default class MOCSyncPlugin extends Plugin {
 			return;
 		}
 
-		const targetMOC = this.extractMOCName(frontmatter.up);
-		if (!targetMOC) {
-			return;
-		}
-
-		const sanitizedMOC = targetMOC
-			.replace(/[\u200B-\u200D\uFEFF]/g, '')
-			.replace(/\s+/g, ' ')
-			.trim();
-
-		const targetFolder = this.findFolderByName(sanitizedMOC);
-		if (!targetFolder || targetFolder instanceof TFile) {
-			return;
-		}
-
-		const targetFolderPath = targetFolder.path + '/';
-		const expectedPath = targetFolderPath + file.name;
-		const currentPath = file.path;
-
-		if (currentPath === expectedPath) {
-			return;
-		}
-
-		try {
-			await this.app.vault.rename(file, expectedPath);
-			if (this.settings.showNotifications) {
-				new Notice(`Moved ${file.name} -> ${targetFolderPath}`);
-			}
-		} catch (error) {
-			console.error(`[MOC Sync] Failed to move file:`, error);
-		}
+		await this.syncNoteToMOC(file, true);
 	}
 
 	async syncAllNotes(): Promise<void> {
@@ -115,27 +184,7 @@ export default class MOCSyncPlugin extends Plugin {
 					const frontmatter = this.parseFrontmatter(data);
 					
 					if (frontmatter && frontmatter.up) {
-						const targetMOC = this.extractMOCName(frontmatter.up);
-						if (!targetMOC) continue;
-
-						const sanitizedMOC = targetMOC
-							.replace(/[\u200B-\u200D\uFEFF]/g, '')
-							.replace(/\s+/g, ' ')
-							.trim();
-
-						const targetFolder = this.findFolderByName(sanitizedMOC);
-						if (!targetFolder || targetFolder instanceof TFile) continue;
-
-						const targetFolderPath = targetFolder.path + '/';
-						const expectedPath = targetFolderPath + file.name;
-						const currentPath = file.path;
-
-						if (currentPath !== expectedPath) {
-							await this.app.vault.rename(file, expectedPath);
-							if (this.settings.showNotifications) {
-								new Notice(`Moved ${file.name} -> ${targetFolderPath}`);
-							}
-						}
+						await this.syncNoteToMOC(file, false);
 					}
 				} catch (error) {
 					console.error(`[MOC Sync] Error syncing ${file.name}:`, error);
