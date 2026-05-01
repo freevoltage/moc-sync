@@ -4,12 +4,14 @@ export interface MOCSyncSettings {
 	autoSyncEnabled: boolean;
 	showNotifications: boolean;
 	syncOnLoad: boolean;
+	excludedDirectories: string;
 }
 
 export const DEFAULT_SETTINGS: MOCSyncSettings = {
 	autoSyncEnabled: true,
 	showNotifications: true,
 	syncOnLoad: false,
+	excludedDirectories: "Templates",
 };
 
 export class MOCSyncSettingTab extends PluginSettingTab {
@@ -53,6 +55,16 @@ export class MOCSyncSettingTab extends PluginSettingTab {
 				.setValue(settings.syncOnLoad)
 				.onChange((value: boolean) => {
 					settings.syncOnLoad = value;
+					this.pluginRef.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Excluded directories')
+			.setDesc('Comma-separated folder names or regex patterns to exclude from moving (e.g., "Templates, Extras" or "/^Temp.*/i")')
+			.addText((text: any) => text
+				.setValue(settings.excludedDirectories)
+				.onChange((value: string) => {
+					settings.excludedDirectories = value;
 					this.pluginRef.saveSettings();
 				}));
 	}

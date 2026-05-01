@@ -51,6 +51,14 @@ export default class MOCSyncPlugin extends Plugin {
 			return;
 		}
 
+		if (this.isFolderNote(file)) {
+			return;
+		}
+
+		if (this.isInExcludedDirectory(file)) {
+			return;
+		}
+
 		const frontmatter = this.parseFrontmatter(data);
 		if (!frontmatter || !frontmatter.up) {
 			return;
@@ -94,6 +102,14 @@ export default class MOCSyncPlugin extends Plugin {
 		
 		for (const file of allFiles) {
 			if (file instanceof TFile && file.extension === 'md') {
+				if (this.isFolderNote(file)) {
+					continue;
+				}
+
+				if (this.isInExcludedDirectory(file)) {
+					continue;
+				}
+
 				try {
 					const data = await this.app.vault.read(file);
 					const frontmatter = this.parseFrontmatter(data);
@@ -185,5 +201,50 @@ export default class MOCSyncPlugin extends Plugin {
 		}
 
 		return null;
+	}
+
+	isFolderNote(file: TFile): boolean {
+		const parentPath = file.path.replace(/[/]?[^/]+$/, '').replace(/^$/, '.');
+		const parentFolder = this.app.vault.getAbstractFileByPath(parentPath);
+		if (parentFolder && parentFolder instanceof TFolder) {
+			return file.basename === parentFolder.name;
+		}
+		return false;
+	}
+
+	isInExcludedDirectory(file: TFile): boolean {
+		const excludedDirs = this.settings.excludedDirectories.trim();
+		if (!excludedDirs) {
+			return false;
+		}
+
+		const filePath = file.path;
+		const pathParts = filePath.split('/');
+		const parentFolderName = pathParts.length > 1 ? pathParts[pathParts.length - 2] : '';
+
+		const patterns = excludedDirs.split(',').map(p => p.trim()).filter(p => p.length > 0);
+
+		for (const pattern of patterns) {
+			const isRegex = pattern.startsWith('/') && pattern.endsWith('/');
+
+			if (isRegex) {
+				const regexPattern = pattern.slice(1, -1);
+				try {
+					const regex = new RegExp(regexPattern, 'i');
+					if (regex.test(filePath) || regex.test(parentFolderName || '')) {
+						return true;
+					}
+				} catch (e) {
+					console.warn(`[MOC Sync] Invalid regex pattern: ${pattern}`);
+				}
+			} else {
+				const normalizedPattern = pattern.toLowerCase();
+				if (filePath.toLowerCase().includes(normalizedPattern)) {
+					return true;
+				}
+			}
+		}
+
+		return false;
 	}
 }
