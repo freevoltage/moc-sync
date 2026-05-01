@@ -121,7 +121,10 @@ export default class MOCSyncPlugin extends Plugin {
 			return 'no_moc_found';
 		}
 
-		const targetFolderPath = targetFolder.path + '/';
+		const matchingSubfolder = this.findSubfolderMatchingBasename(targetFolder, file);
+		const finalTargetFolder = matchingSubfolder || targetFolder;
+
+		const targetFolderPath = finalTargetFolder.path + '/';
 		const expectedPath = targetFolderPath + file.name;
 		const currentPath = file.path;
 
@@ -201,6 +204,22 @@ export default class MOCSyncPlugin extends Plugin {
 				const normalizedName = f.name.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
 				const normalizedSearch = folderName.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
 				return normalizedName === normalizedSearch;
+			}
+			return false;
+		});
+
+		return found instanceof TFolder ? found : null;
+	}
+
+	findSubfolderMatchingBasename(parentFolder: TFolder, file: TFile): TFolder | null {
+		const allFiles = this.app.vault.getAllLoadedFiles();
+		const targetBasename = file.basename;
+
+		const found = allFiles.find(f => {
+			if (f instanceof TFolder) {
+				const normalizedName = f.name.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+				const normalizedTarget = targetBasename.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+				return normalizedName === normalizedTarget && f.path.startsWith(parentFolder.path + '/');
 			}
 			return false;
 		});
