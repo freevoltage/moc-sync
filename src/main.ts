@@ -251,28 +251,29 @@ export default class MOCSyncPlugin extends Plugin {
 
 	async previewSync(): Promise<void> {
 		const allFiles = this.app.vault.getAllLoadedFiles();
-		const results: { file: TFile; target: string; status: string }[] = [];
-		let movedCount = 0;
-		let alreadyInPlaceCount = 0;
-		let noUpCount = 0;
-		let noMocCount = 0;
-		let skippedFolderNoteCount = 0;
-		let skippedExcludedCount = 0;
-		let errorCount = 0;
+		const movedFiles: { file: TFile; target: string; isSubfolder: boolean }[] = [];
+		const alreadyInPlaceFiles: TFile[] = [];
+		const noUpFiles: TFile[] = [];
+		const noMocFiles: { file: TFile; mocName: string }[] = [];
+		const folderNoteFiles: TFile[] = [];
+		const excludedFiles: { file: TFile; dirName: string }[] = [];
+		const errorFiles: TFile[] = [];
 
-		console.log('[MOC Sync] Preview Results:');
+		const separator = '==================================================';
+		console.log(`[MOC Sync] Preview Results\n${separator}`);
 
 		for (const file of allFiles) {
 			if (file instanceof TFile && file.extension === 'md') {
 				if (this.isFolderNote(file)) {
-					console.log(`- ${file.name}: Folder note skipped`);
-					skippedFolderNoteCount++;
+					folderNoteFiles.push(file);
 					continue;
 				}
 
 				if (this.isInExcludedDirectory(file)) {
-					console.log(`- ${file.name}: Excluded directory skipped`);
-					skippedExcludedCount++;
+					const filePath = file.path;
+					const pathParts = filePath.split('/');
+					const parentFolderName = pathParts.length > 1 ? (pathParts[pathParts.length - 2] || 'root') : 'root';
+					excludedFiles.push({ file, dirName: parentFolderName });
 					continue;
 				}
 
@@ -281,15 +282,13 @@ export default class MOCSyncPlugin extends Plugin {
 					const frontmatter = this.parseFrontmatter(data);
 
 					if (!frontmatter || !frontmatter.up) {
-						console.log(`- ${file.name}: No up property`);
-						noUpCount++;
+						noUpFiles.push(file);
 						continue;
 					}
 
 					const targetMOC = this.extractMOCName(frontmatter.up);
 					if (!targetMOC) {
-						console.log(`- ${file.name}: No up property`);
-						noUpCount++;
+						noUpFiles.push(file);
 						continue;
 					}
 
@@ -300,8 +299,7 @@ export default class MOCSyncPlugin extends Plugin {
 
 					const targetFolder = this.findFolderByName(sanitizedMOC);
 					if (!targetFolder || targetFolder instanceof TFile) {
-						console.log(`- ${file.name}: MOC folder not found ("${sanitizedMOC}")`);
-						noMocCount++;
+						noMocFiles.push({ file, mocName: sanitizedMOC });
 						continue;
 					}
 
@@ -311,32 +309,86 @@ export default class MOCSyncPlugin extends Plugin {
 					const expectedPath = finalTargetPath + file.name;
 
 					if (file.path === expectedPath) {
-						console.log(`- ${file.name}: Already in correct folder`);
-						alreadyInPlaceCount++;
+						alreadyInPlaceFiles.push(file);
 						continue;
 					}
 
-					console.log(`✓ ${file.name} -> ${finalTargetPath}`);
-					movedCount++;
-					results.push({ file, target: finalTargetPath, status: 'moved' });
-				} catch (error) {
-					console.log(`- ${file.name}: Error`);
-					errorCount++;
+					movedFiles.push({
+						file,
+						target: finalTargetPath,
+						isSubfolder: !!matchingSubfolder
+					});
+				} catch {
+					errorFiles.push(file);
 				}
 			}
 		}
 
-		const summary = ['Preview: '];
-		if (movedCount > 0) summary.push(`Would move: ${movedCount}`);
-		if (alreadyInPlaceCount > 0) summary.push(`${alreadyInPlaceCount} already in place`);
-		if (noUpCount > 0) summary.push(`${noUpCount} no up`);
-		if (noMocCount > 0) summary.push(`${noMocCount} moc not found`);
-		if (skippedFolderNoteCount > 0) summary.push(`${skippedFolderNoteCount} folder notes`);
-		if (skippedExcludedCount > 0) summary.push(`${skippedExcludedCount} excluded`);
-		if (errorCount > 0) summary.push(`${errorCount} errors`);
+		if (movedFiles.length > 0) {
+			console.log(`MOVED (${movedFiles.length}):`);
+			for (const { file, target, isSubfolder } of movedFiles) {
+				const subfolderNote = isSubfolder ? '  (subfolder)' : '';
+				console.log(`  → ${file.name} → ${target}${subfolderNote}`);
+			}
+		}
 
-		const noticeText = summary.join(', ');
-		new Notice(noticeText || 'Preview: No files to sync');
+		if (alreadyInPlaceFiles.length > 0) {
+			console.log(`\nALREADY IN PLACE (${alreadyInPlaceFiles.length}):`);
+			for (const file of alreadyInPlaceFiles) {
+				console.log(`  → ${file.name}`);
+			}
+		}
+
+		if (noUpFiles.length > 0) {
+			console.log(`\nNO UP PROPERTY (${noUpFiles.length}):`);
+			for (const file of noUpFiles) {
+				console.log(`  → ${file.name}`);
+			}
+		}
+
+		if (noMocFiles.length > 0) {
+			console.log(`\nMOC NOT FOUND (${noMocFiles.length}):`);
+			for (const { file, mocName } of noMocFiles) {
+				console.log(`  → ${file.name} ("${mocName}")`);
+			}
+		}
+
+		if (folderNoteFiles.length > 0 || excludedFiles.length > 0) {
+			console.log(`\nSKIPPED (${folderNoteFiles.length + excludedFiles.length}):`);
+			if (folderNoteFiles.length > 0) {
+				for (const file of folderNoteFiles) {
+					console.log(`  Folder note: ${file.name}`);
+				}
+			}
+			if (excludedFiles.length > 0) {
+				for (const { file, dirName } of excludedFiles) {
+					console.log(`  Excluded: ${file.name} (${dirName})`);
+				}
+			}
+		}
+
+		if (errorFiles.length > 0) {
+			console.log(`\nERRORS (${errorFiles.length}):`);
+			for (const file of errorFiles) {
+				console.log(`  ! ${file.name}`);
+			}
+		}
+
+		console.log(`\n${separator}`);
+
+		const summaryParts: string[] = [];
+		if (movedFiles.length > 0) summaryParts.push(`${movedFiles.length} would move`);
+		if (alreadyInPlaceFiles.length > 0) summaryParts.push(`${alreadyInPlaceFiles.length} already in place`);
+		if (noUpFiles.length > 0) summaryParts.push(`${noUpFiles.length} no up`);
+		if (noMocFiles.length > 0) summaryParts.push(`${noMocFiles.length} not found`);
+		if (folderNoteFiles.length + excludedFiles.length > 0) summaryParts.push(`${folderNoteFiles.length + excludedFiles.length} skipped`);
+		if (errorFiles.length > 0) summaryParts.push(`${errorFiles.length} errors`);
+
+		const summaryLine = summaryParts.join(' | ');
+		console.log(`SUMMARY: ${summaryLine}`);
+
+		const noticeText = summaryLine || 'Preview: No files to sync';
+		new Notice(noticeText);
 	}
 
 	findFolderByName(folderName: string): TFolder | null {
