@@ -5,6 +5,7 @@ export interface MOCSyncSettings {
 	showNotifications: boolean;
 	syncOnLoad: boolean;
 	excludedDirectories: string;
+	autoCreateFolders: boolean;
 }
 
 export const DEFAULT_SETTINGS: MOCSyncSettings = {
@@ -12,6 +13,7 @@ export const DEFAULT_SETTINGS: MOCSyncSettings = {
 	showNotifications: true,
 	syncOnLoad: false,
 	excludedDirectories: "Templates",
+	autoCreateFolders: false,
 };
 
 export class MOCSyncSettingTab extends PluginSettingTab {
@@ -65,6 +67,16 @@ export class MOCSyncSettingTab extends PluginSettingTab {
 				.setValue(settings.excludedDirectories)
 				.onChange((value: string) => {
 					settings.excludedDirectories = value;
+					this.pluginRef.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Auto-create missing MOC folders')
+			.setDesc('Create target folder if it does not exist, but only when the note name matches an existing subfolder elsewhere in the vault')
+			.addToggle((toggle: any) => toggle
+				.setValue(settings.autoCreateFolders)
+				.onChange((value: boolean) => {
+					settings.autoCreateFolders = value;
 					this.pluginRef.saveSettings();
 				}));
 	}

@@ -85,3 +85,7 @@ The plugin listens to `app.metadataCache.on('changed', ...)` which fires when Ob
 - Uses `metadataCache.on('changed')` NOT `vault.on('modify')` for precise frontmatter detection
 - Finds folders by name using `vault.getAllLoadedFiles()` rather than `getAbstractFileByPath()` to handle external folder creation
 - Sanitizes MOC names to handle zero-width characters
+
+## TODOs
+
+For example: When there is a folder "Sport" within "Personal MOC", but this folder does not contain a "Sport Note" yet. When I create a new note it will be automatically created in "0 Inbox MOC". Now when I change the uplink of this note to "Personal MOC", it should actually not move into "Personal MOC", but instead move into "Sport", because there is a Sport Directoriy under "5 Personal MOC" which matches the current file name.

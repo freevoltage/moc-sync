@@ -68,6 +68,14 @@ export default class MOCSyncPlugin extends Plugin {
 			}
 		});
 
+		this.addCommand({
+			id: 'sync-preview',
+			name: 'Preview sync results',
+			callback: async () => {
+				await this.previewSync();
+			}
+		});
+
 		this.addSettingTab(new MOCSyncSettingTab(this.app, this));
 
 		if (this.settings.syncOnLoad) {
@@ -122,9 +130,25 @@ export default class MOCSyncPlugin extends Plugin {
 		}
 
 		const matchingSubfolder = this.findSubfolderMatchingBasename(targetFolder, file);
-		const finalTargetFolder = matchingSubfolder || targetFolder;
+		if (matchingSubfolder) {
+			return this.moveFileToFolder(file, matchingSubfolder, showNotification);
+		}
 
-		const targetFolderPath = finalTargetFolder.path + '/';
+		if (this.settings.autoCreateFolders) {
+			const shouldCreate = this.shouldAutoCreateFolder(file, targetFolder);
+			if (shouldCreate) {
+				const newFolder = await this.createFolder(targetFolder.path + '/' + file.basename);
+				if (newFolder) {
+					return this.moveFileToFolder(file, newFolder, showNotification);
+				}
+			}
+		}
+
+		return this.moveFileToFolder(file, targetFolder, showNotification);
+	}
+
+	async moveFileToFolder(file: TFile, targetFolder: TFolder, showNotification: boolean): Promise<SyncResult> {
+		const targetFolderPath = targetFolder.path + '/';
 		const expectedPath = targetFolderPath + file.name;
 		const currentPath = file.path;
 
@@ -141,6 +165,35 @@ export default class MOCSyncPlugin extends Plugin {
 		} catch (error) {
 			console.error(`[MOC Sync] Failed to move file:`, error);
 			return 'error';
+		}
+	}
+
+	shouldAutoCreateFolder(file: TFile, targetFolder: TFolder): boolean {
+		const allFiles = this.app.vault.getAllLoadedFiles();
+		const basename = file.basename.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+
+		for (const f of allFiles) {
+			if (f instanceof TFolder && f.path.startsWith(targetFolder.path + '/')) {
+				const normalizedName = f.name.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+				if (normalizedName === basename) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	async createFolder(path: string): Promise<TFolder | null> {
+		try {
+			const folder = this.app.vault.getAbstractFileByPath(path);
+			if (folder instanceof TFolder) {
+				return folder;
+			}
+			const created = await this.app.vault.createFolder(path);
+			return created instanceof TFolder ? created : null;
+		} catch (error) {
+			console.error(`[MOC Sync] Failed to create folder:`, error);
+			return null;
 		}
 	}
 
@@ -194,6 +247,96 @@ export default class MOCSyncPlugin extends Plugin {
 				}
 			}
 		}
+	}
+
+	async previewSync(): Promise<void> {
+		const allFiles = this.app.vault.getAllLoadedFiles();
+		const results: { file: TFile; target: string; status: string }[] = [];
+		let movedCount = 0;
+		let alreadyInPlaceCount = 0;
+		let noUpCount = 0;
+		let noMocCount = 0;
+		let skippedFolderNoteCount = 0;
+		let skippedExcludedCount = 0;
+		let errorCount = 0;
+
+		console.log('[MOC Sync] Preview Results:');
+
+		for (const file of allFiles) {
+			if (file instanceof TFile && file.extension === 'md') {
+				if (this.isFolderNote(file)) {
+					console.log(`- ${file.name}: Folder note skipped`);
+					skippedFolderNoteCount++;
+					continue;
+				}
+
+				if (this.isInExcludedDirectory(file)) {
+					console.log(`- ${file.name}: Excluded directory skipped`);
+					skippedExcludedCount++;
+					continue;
+				}
+
+				try {
+					const data = await this.app.vault.read(file);
+					const frontmatter = this.parseFrontmatter(data);
+
+					if (!frontmatter || !frontmatter.up) {
+						console.log(`- ${file.name}: No up property`);
+						noUpCount++;
+						continue;
+					}
+
+					const targetMOC = this.extractMOCName(frontmatter.up);
+					if (!targetMOC) {
+						console.log(`- ${file.name}: No up property`);
+						noUpCount++;
+						continue;
+					}
+
+					const sanitizedMOC = targetMOC
+						.replace(/[\u200B-\u200D\uFEFF]/g, '')
+						.replace(/\s+/g, ' ')
+						.trim();
+
+					const targetFolder = this.findFolderByName(sanitizedMOC);
+					if (!targetFolder || targetFolder instanceof TFile) {
+						console.log(`- ${file.name}: MOC folder not found ("${sanitizedMOC}")`);
+						noMocCount++;
+						continue;
+					}
+
+					const matchingSubfolder = this.findSubfolderMatchingBasename(targetFolder, file);
+					const finalTargetFolder = matchingSubfolder || targetFolder;
+					const finalTargetPath = finalTargetFolder.path + '/';
+					const expectedPath = finalTargetPath + file.name;
+
+					if (file.path === expectedPath) {
+						console.log(`- ${file.name}: Already in correct folder`);
+						alreadyInPlaceCount++;
+						continue;
+					}
+
+					console.log(`✓ ${file.name} -> ${finalTargetPath}`);
+					movedCount++;
+					results.push({ file, target: finalTargetPath, status: 'moved' });
+				} catch (error) {
+					console.log(`- ${file.name}: Error`);
+					errorCount++;
+				}
+			}
+		}
+
+		const summary = ['Preview: '];
+		if (movedCount > 0) summary.push(`Would move: ${movedCount}`);
+		if (alreadyInPlaceCount > 0) summary.push(`${alreadyInPlaceCount} already in place`);
+		if (noUpCount > 0) summary.push(`${noUpCount} no up`);
+		if (noMocCount > 0) summary.push(`${noMocCount} moc not found`);
+		if (skippedFolderNoteCount > 0) summary.push(`${skippedFolderNoteCount} folder notes`);
+		if (skippedExcludedCount > 0) summary.push(`${skippedExcludedCount} excluded`);
+		if (errorCount > 0) summary.push(`${errorCount} errors`);
+
+		const noticeText = summary.join(', ');
+		new Notice(noticeText || 'Preview: No files to sync');
 	}
 
 	findFolderByName(folderName: string): TFolder | null {
